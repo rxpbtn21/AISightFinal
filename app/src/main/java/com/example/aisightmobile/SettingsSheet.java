@@ -20,6 +20,7 @@ final class SettingsSheet {
         void onTestAlarm();
         void onRetryModels();
         void onInstallVoice();
+        void onPreviewVoice();
         void onWearableToggled(boolean on);
     }
 
@@ -33,6 +34,7 @@ final class SettingsSheet {
     private final float density;
     private String aiProblem = null;
     private boolean filipinoVoiceMissing = false;
+    private String voiceStatus = null;
 
     SettingsSheet(Context ctx, LinearLayout body, AppSettings settings, Host host) {
         this.ctx = ctx;
@@ -42,9 +44,10 @@ final class SettingsSheet {
         this.density = ctx.getResources().getDisplayMetrics().density;
     }
 
-    void setNotices(String aiProblemOrNull, boolean filipinoMissing) {
+    void setNotices(String aiProblemOrNull, boolean filipinoMissing, String currentVoiceStatus) {
         this.aiProblem = aiProblemOrNull;
         this.filipinoVoiceMissing = filipinoMissing;
+        this.voiceStatus = currentVoiceStatus;
     }
 
     private int dp(float v) { return Math.round(v * density); }
@@ -75,16 +78,19 @@ final class SettingsSheet {
             s.filipino = i == 1;
             changed(true);
         });
-        if (filipinoVoiceMissing && s.filipino) {
+        if (filipinoVoiceMissing && s.filipino && !"male".equals(s.gender)) {
             notice("Your phone has no Filipino voice installed, so English is used for now.");
             button("Install the Filipino voice", host::onInstallVoice);
         }
 
         section("Voice");
-        choice("Voice", new String[]{"Female", "Male"}, "male".equals(s.gender) ? 1 : 0, i -> {
+        choice("Voice", new String[]{"Female (phone)", "Male (AISight)"}, "male".equals(s.gender) ? 1 : 0, i -> {
             s.gender = i == 1 ? "male" : "female";
             changed(true);
         });
+        hint("Male voice: built-in offline neural voices for English and Filipino. Female voice: an offline voice installed on the phone.");
+        if (voiceStatus != null && !voiceStatus.isEmpty()) hint(voiceStatus);
+        button("Preview selected voice", host::onPreviewVoice);
         choice("Speed", new String[]{"Slow", "Normal", "Fast"},
                 indexOf(new String[]{"slow", "normal", "fast"}, s.speed), i -> {
                     s.speed = new String[]{"slow", "normal", "fast"}[i];

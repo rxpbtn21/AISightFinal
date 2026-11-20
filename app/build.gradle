@@ -1,5 +1,6 @@
 plugins {
     id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
 }
 
 android {
@@ -8,19 +9,29 @@ android {
 
     defaultConfig {
         applicationId 'com.example.aisightmobile'
-        minSdk 23
+        minSdk 26
         targetSdk 34
-        versionCode 3
-        versionName '2.0'
+        versionCode 4
+        versionName '2.1'
+    }
+
+    androidResources {
+        noCompress += ['onnx']
     }
 
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17
         targetCompatibility JavaVersion.VERSION_17
     }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
 }
 
 dependencies {
+    implementation project(':piper-engine')
+    implementation project(':piper-player')
     implementation 'androidx.activity:activity:1.10.1'
     implementation 'androidx.core:core:1.15.0'
     implementation 'androidx.camera:camera-core:1.6.2'
