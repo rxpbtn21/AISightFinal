@@ -11,7 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
@@ -46,6 +46,71 @@ jobs:
           mv /tmp/vosk-model/vosk-model-small-en-us-0.15 app/src/main/assets/
           test -f app/src/main/assets/vosk-model-small-en-us-0.15/conf/model.conf
 
+      - name: Fetch offline Piper Android runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --recurse-submodules https://github.com/piper-tts-apps/piper-kotlin.git vendor/piper-kotlin
+          test -f vendor/piper-kotlin/piper-engine/src/main/cpp/CMakeLists.txt
+          # The Filipino voice uses eSpeak's Indonesian phonemizer, so stage both dictionaries.
+          python - <<'PYCODE'
+          from pathlib import Path
+          script = Path('vendor/piper-kotlin/scripts/stage-espeak-data.sh')
+          content = script.read_text()
+          needle = 'rm -rf "$DICT_TMP"\n\necho "== staged at $DATA"'
+          addition = '''rm -rf "$DICT_TMP"
+          
+          # Filipino Piper model uses the Indonesian (id) eSpeak phonemizer.
+          DICT_TMP="$BUILD/dict-tmp-id"
+          rm -rf "$DICT_TMP"; mkdir -p "$DICT_TMP"
+          cp "$ESPEAK/dictsource/id_rules" "$ESPEAK/dictsource/id_list" \\
+             "$ESPEAK/dictsource/id_emoji" "$DICT_TMP/"
+          (cd "$DICT_TMP" && "$BIN" --compile=id > /dev/null)
+          rm -rf "$DICT_TMP"
+          
+          echo "== staged at $DATA"'''
+          if needle not in content:
+              raise SystemExit('Could not patch Piper eSpeak staging script safely')
+          script.write_text(content.replace(needle, addition))
+          PYCODE
+          bash vendor/piper-kotlin/scripts/fetch-native-deps.sh
+          bash vendor/piper-kotlin/scripts/stage-espeak-data.sh
+          mkdir -p third-party app/src/main/assets/piper/voices app/src/main/assets/piper/espeak-ng-data
+          cp -a vendor/piper-kotlin/third-party/. third-party/
+          cp -a vendor/piper-kotlin/third-party/espeak-ng/build/espeak-ng-data/. app/src/main/assets/piper/espeak-ng-data/
+          mkdir -p app/src/main/assets/licenses
+          cp THIRD_PARTY_NOTICES.md app/src/main/assets/licenses/
+          find vendor/piper-kotlin third-party -maxdepth 4 -type f \
+            \( -iname 'LICENSE' -o -iname 'LICENSE.*' -o -iname 'COPYING' -o -iname 'COPYING.*' \) \
+            -exec cp --parents {} app/src/main/assets/licenses/ \;
+
+      - name: Download bundled offline male voices
+        shell: bash
+        run: |
+          set -euo pipefail
+          VOICES="app/src/main/assets/piper/voices"
+          mkdir -p "$VOICES"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/mike/medium/en_US-mike-medium.onnx \
+            --output "$VOICES/en_US-mike-medium.onnx"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_US/mike/medium/en_US-mike-medium.onnx.json \
+            --output "$VOICES/en_US-mike-medium.onnx.json"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            https://huggingface.co/IhorShevchuk/piper-voice-tl-filipino/resolve/main/tl_PH-filipino-medium-model.onnx \
+            --output "$VOICES/tl_PH-filipino-medium-model.onnx"
+          curl --fail --location --retry 5 --retry-delay 2 \
+            https://huggingface.co/IhorShevchuk/piper-voice-tl-filipino/resolve/main/tl_PH-filipino-medium-model.onnx.json \
+            --output "$VOICES/tl_PH-filipino-medium-model.onnx.json"
+          test -s "$VOICES/en_US-mike-medium.onnx"
+          test -s "$VOICES/en_US-mike-medium.onnx.json"
+          test -s "$VOICES/tl_PH-filipino-medium-model.onnx"
+          test -s "$VOICES/tl_PH-filipino-medium-model.onnx.json"
+          echo '4d59d1813484bedfb99a44204ce6e991  app/src/main/assets/piper/voices/en_US-mike-medium.onnx' | md5sum --check -
+          echo '1ddf7bcf4b67eb6ec61b39e4bf46f90e  app/src/main/assets/piper/voices/en_US-mike-medium.onnx.json' | md5sum --check -
+          test -s app/src/main/assets/piper/espeak-ng-data/id_dict
+          test -s app/src/main/assets/piper/espeak-ng-data/en_dict
+
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -58,17 +123,16 @@ jobs:
           gradle-version: '8.11.1'
 
       # v4 no longer requests Google's removed "tools" SDK package by default.
-      # Keep this explicit so setup cannot fail on the deprecated package again.
       - name: Set up Android SDK
         uses: android-actions/setup-android@v4
         with:
           packages: 'platform-tools'
 
       - name: Install Android SDK packages
-        run: sdkmanager "platforms;android-36" "build-tools;36.0.0"
+        run: |
+          sdkmanager "platforms;android-35" "platforms;android-36" "build-tools;36.0.0" \
+            "ndk;27.0.12077973" "cmake;3.22.1"
 
-      # The announcement / voice-command / camera-health logic is plain Java and has unit tests.
-      # Non-blocking on purpose: a failing test is reported, but never stops you getting an APK.
       - name: Run unit tests
         continue-on-error: true
         run: gradle testDebugUnitTest --no-daemon
