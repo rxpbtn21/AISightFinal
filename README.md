@@ -89,3 +89,13 @@ logo would be better: replace the file and run the script again.
 * Wearable mode keeps the screen on at minimum brightness; Android doesn't allow camera access with the screen locked
   unless the app runs as a foreground service (a good next step).
 * Navigation mode is experimental, as on the Pi.
+
+## Offline male voices (new in 2.1)
+
+Male mode now uses two bundled Piper neural voices: English (US) `en_US-mike-medium` and a Filipino/Tagalog `tl_PH` voice. The matching model is selected from the Language setting. Both model weights and the phonemizer data are downloaded during GitHub Actions and embedded in the APK; AISight does not download voices at runtime and does not require internet access to speak.
+
+The voices are language-specific models, not one bilingual model, so the English and Tagalog voices may not sound exactly like the same speaker. The Filipino voice is new and experimental; its model card reports that it uses the Indonesian eSpeak phonemizer and that mixed Tagalog-English pronunciation may vary. Its male-sounding classification is inferred from sample pitch rather than stated as a guaranteed speaker-gender label. Read `THIRD_PARTY_NOTICES.md` before redistributing: the Filipino model is CC BY-NC-SA 4.0 (non-commercial), and the Android Piper runtime is GPL-3.0-or-later.
+
+Female mode continues to use only an already-installed offline voice from the phone's Android TTS engine. Online TTS voices are not selected. The bundled Piper runtime requires Android 8.0 (API 26) or newer, so the app's minimum Android version is now 8.0.
+
+The GitHub Actions workflow clones the Piper Android runtime, builds its native dependencies, stages English and Indonesian eSpeak dictionaries, and downloads the two voice models on each clean build. Local Android Studio builds need the same generated `vendor/piper-kotlin/`, `third-party/`, and `app/src/main/assets/piper/` content; running the GitHub Actions workflow is the easiest way to produce the complete APK.

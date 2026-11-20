@@ -1,0 +1,17 @@
+.gradle/
+build/
+app/build/
+local.properties
+.idea/
+*.iml
+.DS_Store
+
+# Large generated runtime models are created by scripts/export_models.py / GitHub Actions.
+app/src/main/assets/aisight.tflite
+app/src/main/assets/depth.tflite
+app/src/main/assets/vosk-model-small-en-us-0.15/
+models/yolo26n-depth.pt
+# Piper runtime source/native dependencies and large build-time voice assets.
+vendor/piper-kotlin/
+third-party/
+app/src/main/assets/piper/

@@ -13,4 +13,7 @@ dependencyResolutionManagement {
     }
 }
 rootProject.name = 'AISightMobile'
-include ':app'
+include ':app', ':piper-engine', ':piper-utils', ':piper-player'
+project(':piper-engine').projectDir = file('vendor/piper-kotlin/piper-engine')
+project(':piper-utils').projectDir = file('vendor/piper-kotlin/piper-utils')
+project(':piper-player').projectDir = file('vendor/piper-kotlin/piper-player')
