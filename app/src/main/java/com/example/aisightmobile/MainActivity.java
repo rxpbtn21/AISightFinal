@@ -285,7 +285,7 @@ public final class MainActivity extends ComponentActivity {
         permissionLayer.setVisibility(hasCamera ? View.GONE : View.VISIBLE);
         btnOpenSettings.setVisibility(blocked ? View.VISIBLE : View.GONE);
         if (blocked) {
-            permText.setText("Camera access is turned off for AISight.\n\nOpen the phone settings, tap Permissions, and allow Camera (and Microphone for voice commands).");
+            permText.setText("Camera access is turned off.\n\nOpen the phone settings, tap Permissions, and allow Camera (and Microphone for voice commands).");
         }
         if (started && hasCamera) camera.bind();
         if (started && hasMic) voice.start();
@@ -300,7 +300,7 @@ public final class MainActivity extends ComponentActivity {
             speech.sayPriority("AISight is ready.");
             firstStartSpoken = true;
         } else {
-            speech.sayPriority("AISight is active. Say eyesight start, turn on, begin, or launch, to begin.");
+            speech.sayPriority("AISight is active. Say start, turn on, begin, or launch, to begin.");
         }
     }
 
@@ -536,7 +536,7 @@ public final class MainActivity extends ComponentActivity {
             case SHUTDOWN:
                 awaitingShutdown = true;
                 shutdownDeadline = SystemClock.elapsedRealtime() + 15_000;
-                say("Close AISight? Say eyesight yes, or eyesight no.");
+                say("Are you sure you want to close the app? Say yes, or no.");
                 break;
             case YES:
                 awaitingShutdown = false;
@@ -567,7 +567,7 @@ public final class MainActivity extends ComponentActivity {
                     say("AISight is ready. Say eyesight, then a command, any time.");
                 } else say("Resuming.");
             } else {
-                say("Going quiet. Say eyesight start to resume.");
+                say("Going quiet. Say start or continue to resume.");
             }
         }
         refreshAll();
@@ -592,8 +592,8 @@ public final class MainActivity extends ComponentActivity {
         runOnUiThread(() -> {
             showAlarmBanner(true, "Fall detected");
             speech.sayPriority(settings.filipino
-                    ? "Nahulog ka ba? Sabihin ang eyesight alarm stop para patahimikin."
-                    : "Fall detected. Are you okay? Say eyesight alarm stop to silence this.");
+                    ? "Nahulog ka ba? Sabihin ang alarm stop para patahimikin."
+                    : "Fall detected. Are you okay? Say alarm stop to silence this.");
             ui.removeCallbacks(startFallAlarm);
             ui.postDelayed(startFallAlarm, 4500);     // the spoken question first, THEN the alarm (like the Pi build)
         });
@@ -620,9 +620,9 @@ public final class MainActivity extends ComponentActivity {
         getWindow().setAttributes(lp);
         WindowInsetsControllerCompat controller = WindowCompat.getInsetsController(getWindow(), root);
         if (on) controller.hide(WindowInsetsCompat.Type.systemBars()); else controller.show(WindowInsetsCompat.Type.systemBars());
-        wearableText.setText("AISight is running\nPress and hold to show the screen");
+        wearableText.setText("App is running\nPress and hold to show the screen");
         if (speak) {
-            say(on ? "Wearable mode. The screen is off. Say eyesight show screen to bring it back."
+            say(on ? "Wearable mode. The screen is off. Say show screen to bring it back."
                     : "Screen on.");
         }
     }
