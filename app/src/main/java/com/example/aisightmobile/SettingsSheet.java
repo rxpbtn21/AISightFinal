@@ -88,7 +88,7 @@ final class SettingsSheet {
             s.gender = i == 1 ? "male" : "female";
             changed(true);
         });
-        hint("Male voice: built-in offline neural voices for English and Filipino. Female voice: an offline voice installed on the phone.");
+        hint("Male voice: bundled offline neural voices for English and Filipino. Female voice: the original phone TTS voice.");
         if (voiceStatus != null && !voiceStatus.isEmpty()) hint(voiceStatus);
         button("Preview selected voice", host::onPreviewVoice);
         choice("Speed", new String[]{"Slow", "Normal", "Fast"},

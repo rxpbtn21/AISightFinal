@@ -3,6 +3,7 @@ package com.example.aisightmobile
 import android.content.Context
 import android.media.AudioAttributes
 import android.media.AudioFormat
+import android.media.AudioManager
 import android.media.AudioTrack
 import dev.ihorshevchuk.piper.engine.PiperCreateOptions
 import dev.ihorshevchuk.piper.engine.PiperEngine
@@ -14,8 +15,8 @@ import kotlin.math.roundToInt
 
 /**
  * Bundled, fully on-device neural speech for AISight's Male setting.
- * The English and Filipino voices are separate Piper models, selected by language.
- * Model weights and eSpeak data are packaged in the APK by GitHub Actions.
+ * The language-specific Piper model and eSpeak data are packaged in the APK.
+ * Playback follows piper-kotlin's sample-rate-aware AudioTrack streaming path.
  */
 class PiperOfflineSpeaker(context: Context) {
     interface Callback {
@@ -56,19 +57,16 @@ class PiperOfflineSpeaker(context: Context) {
             callback.onComplete("Offline voice engine is closed.")
             return
         }
+
         worker.execute {
             var track: AudioTrack? = null
+            var samplesWritten = 0L
             try {
                 if (ticket != generation.get()) return@execute
                 val modelFile = stageVoice(filipino)
                 val espeakDir = stageEspeakData()
                 val currentEngine = getEngine(modelFile, espeakDir)
                 if (ticket != generation.get()) return@execute
-
-                val sampleRate = 22050
-                track = createTrack(sampleRate, volume)
-                activeTrack = track
-                track.play()
 
                 val lengthScale = when {
                     rate <= 0.8f -> 1.24f
@@ -78,18 +76,59 @@ class PiperOfflineSpeaker(context: Context) {
                 val options = currentEngine.defaultSynthesizeOptions().copy(lengthScale = lengthScale)
                 currentEngine.synthesize(text, options, onSamples = { samples ->
                     if (ticket != generation.get() || samples.isEmpty()) return@synthesize
+
+                    // Read the actual sample rate reported by Piper for this audio chunk.
+                    val sampleRate = currentEngine.currentSampleRate.get().takeIf { it > 0 } ?: 22050
+                    var output = track
+                    if (output == null) {
+                        val created = createTrack(sampleRate, volume)
+                        track = created
+                        activeTrack = created
+                        created.play()
+                        output = created
+                    }
+                    val activeOutput = output
+
                     val pcm = ShortArray(samples.size) { index ->
                         (samples[index].coerceIn(-1f, 1f) * 32767f).roundToInt().toShort()
                     }
-                    track?.write(pcm, 0, pcm.size, AudioTrack.WRITE_BLOCKING)
+                    var offset = 0
+                    var emptyWrites = 0
+                    while (offset < pcm.size && ticket == generation.get()) {
+                        val written = activeOutput.write(
+                            pcm, offset, pcm.size - offset, AudioTrack.WRITE_BLOCKING
+                        )
+                        if (written < 0) {
+                            throw IOException("AudioTrack write failed (code $written)")
+                        }
+                        if (written == 0) {
+                            emptyWrites++
+                            if (emptyWrites >= 5) throw IOException("AudioTrack stopped accepting audio samples")
+                        } else {
+                            offset += written
+                            samplesWritten += written.toLong()
+                            emptyWrites = 0
+                        }
+                    }
                 })
-                if (ticket == generation.get()) {
-                    try { track.stop() } catch (_: IllegalStateException) { }
+
+                if (ticket != generation.get()) return@execute
+                if (samplesWritten == 0L) {
+                    throw IOException("Piper generated no playable audio samples. Check the bundled model and phonemizer data.")
+                }
+                try {
+                    track?.stop()
+                } catch (_: IllegalStateException) {
+                    // Track may already have stopped during an interruption.
                 }
                 callback.onComplete(null)
             } catch (error: Exception) {
                 if (ticket == generation.get()) {
                     callback.onComplete(error.message ?: error.javaClass.simpleName)
+                }
+            } catch (error: LinkageError) {
+                if (ticket == generation.get()) {
+                    callback.onComplete("Piper native audio engine could not load: ${error.message ?: error.javaClass.simpleName}")
                 }
             } finally {
                 if (activeTrack === track) activeTrack = null
@@ -139,16 +178,16 @@ class PiperOfflineSpeaker(context: Context) {
 
     private fun stageEspeakData(): File {
         val target = File(appContext.filesDir, "aisight-piper/espeak-ng-data")
-        val marker = File(target, ".aisight-assets-ready")
+        val marker = File(target, ".aisight-assets-ready-v2")
         if (marker.isFile) return target
-        if (target.exists()) target.deleteRecursively()
+        if (target.exists() && !target.deleteRecursively()) throw IOException("Cannot replace old phonemizer data")
         if (!target.mkdirs()) throw IOException("Cannot create phonemizer data directory")
         copyAssetTree("piper/espeak-ng-data", target)
         val required = listOf("phondata", "phonindex", "phontab", "id_dict", "en_dict")
         for (file in required) {
             if (!File(target, file).isFile) throw IOException("Missing offline phonemizer file: $file")
         }
-        marker.writeText("AISight Piper phonemizer data v1")
+        marker.writeText("AISight Piper phonemizer data v2")
         return target
     }
 
@@ -192,7 +231,10 @@ class PiperOfflineSpeaker(context: Context) {
 
     private fun createTrack(sampleRate: Int, volume: Float): AudioTrack {
         val attributes = AudioAttributes.Builder()
-            .setUsage(AudioAttributes.USAGE_ASSISTANT)
+            // Use the normal media volume stream. Some OEM builds keep the
+            // assistant volume stream separately muted, which can make a
+            // correctly synthesized AudioTrack appear completely silent.
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
             .build()
         val format = AudioFormat.Builder()
@@ -202,13 +244,20 @@ class PiperOfflineSpeaker(context: Context) {
             .build()
         val minimum = AudioTrack.getMinBufferSize(
             sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
-        ).coerceAtLeast(sampleRate / 5)
-        return AudioTrack.Builder()
-            .setAudioAttributes(attributes)
-            .setAudioFormat(format)
-            .setBufferSizeInBytes(minimum * 4)
-            .setTransferMode(AudioTrack.MODE_STREAM)
-            .build()
-            .apply { setVolume(volume.coerceIn(0f, 1f)) }
+        )
+        if (minimum <= 0) throw IOException("Android rejected the Piper audio format (buffer error $minimum)")
+        val output = AudioTrack(
+            attributes,
+            format,
+            minimum * 4,
+            AudioTrack.MODE_STREAM,
+            AudioManager.AUDIO_SESSION_ID_GENERATE
+        )
+        if (output.state != AudioTrack.STATE_INITIALIZED) {
+            output.release()
+            throw IOException("Android could not initialize the Piper audio output track")
+        }
+        output.setVolume(volume.coerceIn(0f, 1f))
+        return output
     }
 }

@@ -297,10 +297,10 @@ public final class MainActivity extends ComponentActivity {
         if (welcomed || !speech.isReady() || !hasCamera) return;
         welcomed = true;
         if (settings.armed) {
-            speech.sayPriority("AISight is online.");
+            speech.sayPriority("AISight is ready.");
             firstStartSpoken = true;
         } else {
-            speech.sayPriority("Application is now active. Say start, turn on, begin, or launch, to begin.");
+            speech.sayPriority("AISight is active. Say eyesight start, turn on, begin, or launch, to begin.");
         }
     }
 
@@ -547,7 +547,7 @@ public final class MainActivity extends ComponentActivity {
             case SHUTDOWN:
                 awaitingShutdown = true;
                 shutdownDeadline = SystemClock.elapsedRealtime() + 15_000;
-                say("Are you sure you want to close the app? Say yes, or no.");
+                say("Close AISight? Say eyesight yes, or eyesight no.");
                 break;
             case YES:
                 awaitingShutdown = false;
@@ -575,10 +575,10 @@ public final class MainActivity extends ComponentActivity {
             if (on) {
                 if (!firstStartSpoken) {
                     firstStartSpoken = true;
-                    say("AISight is now activated. Always say eyesight first, then a command, any time.");
+                    say("AISight is ready. Say eyesight, then a command, any time.");
                 } else say("Resuming.");
             } else {
-                say("Going quiet. Say start to resume.");
+                say("Going quiet. Say eyesight start to resume.");
             }
         }
         refreshAll();
@@ -603,8 +603,8 @@ public final class MainActivity extends ComponentActivity {
         runOnUiThread(() -> {
             showAlarmBanner(true, "Fall detected");
             speech.sayPriority(settings.filipino
-                    ? "Nahulog ka ba? Sabihin ang alarm stop para patahimikin."
-                    : "Fall detected. Are you okay? Say alarm stop to silence this.");
+                    ? "Nahulog ka ba? Sabihin ang eyesight alarm stop para patahimikin."
+                    : "Fall detected. Are you okay? Say eyesight alarm stop to silence this.");
             ui.removeCallbacks(startFallAlarm);
             ui.postDelayed(startFallAlarm, 4500);     // the spoken question first, THEN the alarm (like the Pi build)
         });
@@ -633,7 +633,7 @@ public final class MainActivity extends ComponentActivity {
         if (on) controller.hide(WindowInsetsCompat.Type.systemBars()); else controller.show(WindowInsetsCompat.Type.systemBars());
         wearableText.setText("AISight is running\nPress and hold to show the screen");
         if (speak) {
-            say(on ? "Wearable mode. The screen is off. Say show screen to bring it back."
+            say(on ? "Wearable mode. The screen is off. Say eyesight show screen to bring it back."
                     : "Screen on.");
         }
     }
@@ -708,7 +708,7 @@ public final class MainActivity extends ComponentActivity {
             loadingPanel.setVisibility(View.VISIBLE);
             loadingText.setText(yoloState == AnalysisPipeline.ModelState.FAILED
                     ? "The AI couldn't load\n" + modelDetail + "\nTap to try again"
-                    : "Getting the AI online...\nThe first launch takes a little longer");
+                    : "Getting the AI ready...\nThe first launch takes a little longer");
         }
     }
 
@@ -748,7 +748,7 @@ public final class MainActivity extends ComponentActivity {
         // camera
         if (!hasCamera) setChip(chipCamera, "Camera off", R.color.danger, cameraDetail());
         else switch (health.state()) {
-            case HEALTHY: setChip(chipCamera, "Camera online", R.color.ok, cameraDetail()); break;
+            case HEALTHY: setChip(chipCamera, "Camera ready", R.color.ok, cameraDetail()); break;
             case FAULT: setChip(chipCamera, "Camera lost", R.color.danger, cameraDetail()); break;
             default: setChip(chipCamera, "Camera starting", R.color.warn, cameraDetail());
         }
@@ -758,7 +758,7 @@ public final class MainActivity extends ComponentActivity {
         else if (depthState == AnalysisPipeline.ModelState.FAILED || !lastDepthOk && depthState == AnalysisPipeline.ModelState.READY)
             setChip(chipAi, "No distance", R.color.warn, aiDetail());
         else if (pipeline.averageMillis() > 1500) setChip(chipAi, "AI slow", R.color.warn, aiDetail());
-        else setChip(chipAi, "AI online", R.color.ok, aiDetail());
+        else setChip(chipAi, "AI ready", R.color.ok, aiDetail());
         // voice
         if (!hasMic) setChip(chipVoice, "Voice off", R.color.danger, voiceDetail());
         else if (micFaulted) setChip(chipVoice, "Mic lost", R.color.danger, voiceDetail());

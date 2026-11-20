@@ -17,9 +17,10 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Offline speech output.
- * - Male: bundled Piper neural voice, independent of the phone's TTS engine.
- * - Female: an already-installed, on-device Android TTS voice only.
+ * Speech output with two engines:
+ * - Female: keeps the phone TTS behaviour used by the original AISight build.
+ * - Male: prefers the bundled offline Piper neural model. If Piper fails at
+ *   runtime, it falls back to an installed offline phone voice instead of silence.
  *
  * Routine announcements are dropped while speech is active. Priority speech
  * interrupts routine speech and queues behind other priority speech.
@@ -47,7 +48,8 @@ final class SpeechOutput {
     private final PiperOfflineSpeaker piper;
     private TextToSpeech tts;
     private volatile boolean ready;
-    private volatile boolean offlineVoiceReady;
+    private volatile boolean phoneVoiceReady;
+    private volatile boolean malePiperFailed;
     private volatile String voiceStatus = "Voice selection has not been checked yet.";
     private final AtomicInteger counter = new AtomicInteger();
     private final Map<String, long[]> live = new ConcurrentHashMap<>();
@@ -70,121 +72,143 @@ final class SpeechOutput {
                 });
                 configure();
             } else {
-                voiceStatus = "The phone's TTS engine did not initialize. Built-in male voices may still work.";
+                voiceStatus = "The phone's TTS engine did not initialize. AISight's bundled male voice may still work.";
             }
             listener.onReady(isReady());
         });
     }
 
     boolean isReady() {
-        if (isMale()) return piper.isAvailable(settings.filipino);
-        return ready && offlineVoiceReady;
+        if (isMale() && !malePiperFailed) return piper.isAvailable(settings.filipino);
+        return ready && phoneVoiceReady;
     }
 
     /** Re-apply language / voice / speed after a setting changed. */
     void configure() {
         stopMaleQueue();
         live.clear();
+        malePiperFailed = false;
+        phoneVoiceReady = false;
 
         if (isMale()) {
             if (ready && tts != null) tts.stop();
-            offlineVoiceReady = piper.isAvailable(settings.filipino);
-            if (offlineVoiceReady) {
+            if (piper.isAvailable(settings.filipino)) {
                 voiceStatus = settings.filipino
-                        ? "Built-in offline male Filipino/Tagalog neural voice selected. No internet required."
-                        : "Built-in offline male English neural voice selected. No internet required.";
+                        ? "Bundled offline male Filipino/Tagalog neural voice selected. No internet required."
+                        : "Bundled offline male English neural voice selected. No internet required.";
+                return;
+            }
+
+            // Assets missing? Preserve speech by trying an already-installed local phone voice.
+            malePiperFailed = true;
+            if (configurePhoneMaleFallback()) {
+                voiceStatus = "Bundled male voice is missing. Using the phone's installed offline voice instead.";
             } else {
-                voiceStatus = "The bundled offline male voice is missing from this APK. Rebuild and reinstall AISight.";
+                voiceStatus = "Bundled male voice is missing and no suitable installed offline phone voice is available.";
             }
             return;
         }
 
-        offlineVoiceReady = false;
+        // FEMALE MODE: intentionally preserve the original AISight Android TTS path.
+        // This restores the phone's previous default female timbre and pitch.
         if (!ready || tts == null) {
-            voiceStatus = "The phone's TTS engine is not ready. Male voice is bundled separately in AISight.";
+            voiceStatus = "The phone's TTS engine is not ready.";
             return;
         }
 
-        boolean filipino = settings.filipino;
-        Locale wanted = filipino ? new Locale("fil", "PH") : Locale.US;
-        boolean languageSet = tts.setLanguage(wanted) >= TextToSpeech.LANG_AVAILABLE;
-        if (!languageSet && filipino) {
-            listener.onLanguageMissing(true);
-            wanted = Locale.US;
-            tts.setLanguage(wanted);
-        }
-
-        float rate = speechRate();
-        tts.setSpeechRate(rate);
-        boolean actualGender = pickLocalVoice(wanted, false);
-        if (!offlineVoiceReady && filipino) {
-            listener.onLanguageMissing(true);
+        boolean fil = settings.filipino;
+        Locale wanted = fil ? new Locale("fil", "PH") : Locale.US;
+        int result = tts.setLanguage(wanted);
+        if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
             tts.setLanguage(Locale.US);
-            actualGender = pickLocalVoice(Locale.US, false);
+            listener.onLanguageMissing(fil);
+            wanted = Locale.US;
         }
-        tts.setPitch(actualGender ? 1.0f : 1.06f);
-        if (!offlineVoiceReady) {
-            voiceStatus = "No installed offline female voice is available. Speech is paused rather than using network TTS.";
-        }
+        tts.setPitch(1.07f);
+        tts.setSpeechRate(speechRate());
+        pickVoice(wanted.getLanguage(), true);
+        phoneVoiceReady = true;
+        voiceStatus = "Using the original phone text-to-speech voice.";
     }
 
     String getVoiceStatus() { return voiceStatus; }
 
-    private boolean pickLocalVoice(Locale wanted, boolean male) {
-        offlineVoiceReady = false;
+    /** Original AISight voice selection: only override the engine default when its name marks gender. */
+    private void pickVoice(String language, boolean female) {
         try {
             Set<Voice> voices = tts.getVoices();
-            if (voices == null || voices.isEmpty()) {
-                voiceStatus = "This TTS engine exposes no voices. Install an offline voice in Android settings.";
-                return false;
-            }
-            Voice genderMatch = null;
-            Voice fallback = null;
-            int fallbackScore = Integer.MIN_VALUE;
+            if (voices == null) return;
+            Voice best = null;
             for (Voice voice : voices) {
-                Locale locale = voice.getLocale();
-                if (locale == null || !sameLanguage(wanted, locale)) continue;
-                if (voice.isNetworkConnectionRequired()) continue;
-                Set<String> features = voice.getFeatures();
-                if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
+                if (voice.getLocale() == null || !language.equals(voice.getLocale().getLanguage())
+                        || voice.isNetworkConnectionRequired()) continue;
                 String name = voice.getName() == null ? "" : voice.getName().toLowerCase(Locale.US);
-                int marker = genderMarker(name);
-                if ((male && marker == 1) || (!male && marker == -1)) {
-                    genderMatch = voice;
+                boolean nameFemale = name.contains("female") || name.contains("-f-") || name.contains("#female");
+                boolean nameMale = !nameFemale && (name.contains("male") || name.contains("-m-") || name.contains("#male"));
+                if ((female && nameFemale) || (!female && nameMale)) {
+                    best = voice;
                     break;
                 }
-                if ((male && marker == -1) || (!male && marker == 1)) continue;
-                int score = 0;
-                if (wanted.getCountry().equalsIgnoreCase(locale.getCountry())) score += 20;
-                if (voice.getQuality() == Voice.QUALITY_HIGH) score += 5;
-                if (score > fallbackScore) { fallback = voice; fallbackScore = score; }
             }
-            Voice chosen = genderMatch != null ? genderMatch : fallback;
-            if (chosen == null) {
-                voiceStatus = "No installed offline " + wanted.getDisplayLanguage(Locale.US)
-                        + " female voice is available. Install offline voice data in Android settings.";
-                return false;
+            if (best != null) tts.setVoice(best);
+        } catch (RuntimeException ignored) {
+            // Keep the Android engine's selected default voice, like the original build.
+        }
+    }
+
+    /** Offline-only fallback for Male mode if Piper cannot synthesize or play audio. */
+    private boolean configurePhoneMaleFallback() {
+        phoneVoiceReady = false;
+        if (!ready || tts == null) return false;
+        try {
+            boolean fil = settings.filipino;
+            Locale wanted = fil ? new Locale("fil", "PH") : Locale.US;
+            int result = tts.setLanguage(wanted);
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                if (fil) listener.onLanguageMissing(true);
+                wanted = Locale.US;
+                result = tts.setLanguage(wanted);
             }
-            if (tts.setVoice(chosen) != TextToSpeech.SUCCESS) {
-                voiceStatus = "Could not activate the installed offline voice.";
-                return false;
+            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED) return false;
+
+            Set<Voice> voices = tts.getVoices();
+            Voice male = null;
+            Voice fallback = null;
+            int fallbackScore = Integer.MIN_VALUE;
+            if (voices != null) {
+                for (Voice voice : voices) {
+                    Locale locale = voice.getLocale();
+                    if (locale == null || !sameLanguage(wanted, locale) || voice.isNetworkConnectionRequired()) continue;
+                    Set<String> features = voice.getFeatures();
+                    if (features != null && features.contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED)) continue;
+                    String name = voice.getName() == null ? "" : voice.getName().toLowerCase(Locale.US);
+                    int marker = genderMarker(name);
+                    if (marker == 1) { male = voice; break; }
+                    int score = 0;
+                    if (wanted.getCountry().equalsIgnoreCase(locale.getCountry())) score += 20;
+                    if (voice.getQuality() == Voice.QUALITY_HIGH) score += 5;
+                    if (score > fallbackScore) { fallback = voice; fallbackScore = score; }
+                }
             }
-            offlineVoiceReady = true;
-            voiceStatus = genderMatch != null
-                    ? "Installed offline female voice selected: " + chosen.getName()
-                    : "Installed offline voice selected: " + chosen.getName()
-                        + ". The engine did not identify its gender; slight pitch adjustment is used.";
-            return genderMatch != null;
+            Voice chosen = male != null ? male : fallback;
+            if (chosen != null && tts.setVoice(chosen) != TextToSpeech.SUCCESS) return false;
+            if (chosen == null) return false;
+
+            tts.setSpeechRate(speechRate());
+            tts.setPitch(male != null ? 1.0f : 0.92f);
+            phoneVoiceReady = true;
+            voiceStatus = male != null
+                    ? "Using the phone's installed offline male voice as fallback."
+                    : "Using an installed offline phone voice with a lower pitch as fallback; this is not a separate male speaker.";
+            return true;
         } catch (RuntimeException ex) {
-            voiceStatus = "Could not inspect installed offline voices. Check Android Text-to-speech settings.";
+            phoneVoiceReady = false;
             return false;
         }
     }
 
     private boolean sameLanguage(Locale a, Locale b) {
-        String one = normalizedLanguage(a.getLanguage());
-        String two = normalizedLanguage(b.getLanguage());
-        return one.equals(two);
+        return normalizedLanguage(a.getLanguage()).equals(normalizedLanguage(b.getLanguage()));
     }
 
     private String normalizedLanguage(String language) {
@@ -212,14 +236,14 @@ final class SpeechOutput {
 
     boolean say(String text) {
         if (text == null || text.trim().isEmpty()) return false;
-        if (isMale()) {
+        if (isMale() && !malePiperFailed) {
             synchronized (maleLock) {
                 if (maleActive != null || !malePending.isEmpty()) return false;
                 startMaleLocked(new MaleRequest(text, false, settings.filipino));
                 return true;
             }
         }
-        if (!ready || !offlineVoiceReady) return false;
+        if (!ready || !phoneVoiceReady) return false;
         purgeStale();
         if (!live.isEmpty()) return false;
         speakPhone(text, TextToSpeech.QUEUE_ADD, false);
@@ -228,7 +252,7 @@ final class SpeechOutput {
 
     void sayPriority(String text) {
         if (text == null || text.trim().isEmpty()) return;
-        if (isMale()) {
+        if (isMale() && !malePiperFailed) {
             synchronized (maleLock) {
                 if (maleActive != null && !maleActive.priority) {
                     piper.stop();
@@ -239,7 +263,7 @@ final class SpeechOutput {
             }
             return;
         }
-        if (!ready || !offlineVoiceReady) return;
+        if (!ready || !phoneVoiceReady) return;
         purgeStale();
         boolean priorityBusy = false;
         for (long[] value : live.values()) if (value[1] == 1) { priorityBusy = true; break; }
@@ -248,25 +272,59 @@ final class SpeechOutput {
 
     private void startNextMaleLocked() {
         if (maleActive != null || malePending.isEmpty()) return;
-        startMaleLocked(malePending.removeFirst());
+        MaleRequest next = malePending.removeFirst();
+        if (malePiperFailed) {
+            if (ready && phoneVoiceReady) {
+                speakPhone(next.text, TextToSpeech.QUEUE_ADD, next.priority);
+            } else {
+                listener.onVoiceError("No offline male speech engine is available for the queued announcement.");
+            }
+            startNextMaleLocked();
+            return;
+        }
+        startMaleLocked(next);
     }
 
     private void startMaleLocked(MaleRequest request) {
         maleActive = request;
         if (!piper.isAvailable(request.filipino)) {
             maleActive = null;
-            voiceStatus = "The bundled offline male voice for this language is unavailable.";
-            listener.onVoiceError(voiceStatus);
+            malePiperFailed = true;
+            if (configurePhoneMaleFallback()) {
+                voiceStatus = "Bundled offline male voice is unavailable; using the phone's offline TTS fallback.";
+                speakPhone(request.text, request.priority ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD, request.priority);
+            } else {
+                voiceStatus = "The bundled offline male voice is unavailable, and no local phone voice could be activated.";
+                listener.onVoiceError(voiceStatus);
+            }
             startNextMaleLocked();
             return;
         }
+
         piper.speak(request.text, request.filipino, speechRate(), volumeValue(), error -> {
             synchronized (maleLock) {
                 if (maleActive != request) return;
                 maleActive = null;
                 if (error != null && !error.isEmpty()) {
-                    voiceStatus = "Offline male voice error: " + error;
-                    listener.onVoiceError(voiceStatus);
+                    // Do not leave the user with silence. Try a locally installed voice only;
+                    // network-required voices are filtered out in configurePhoneMaleFallback().
+                    malePiperFailed = true;
+                    if (configurePhoneMaleFallback()) {
+                        voiceStatus = "Piper could not play the bundled voice (" + error
+                                + "). Switched to the phone's offline TTS fallback.";
+                        listener.onVoiceError("Bundled male voice failed. Using an installed offline phone voice instead.");
+                        speakPhone(request.text,
+                                request.priority ? TextToSpeech.QUEUE_FLUSH : TextToSpeech.QUEUE_ADD,
+                                request.priority);
+                    } else {
+                        voiceStatus = "Offline male voice failed: " + error
+                                + ". No installed offline phone voice is available as fallback.";
+                        listener.onVoiceError(voiceStatus);
+                    }
+                } else {
+                    voiceStatus = request.filipino
+                            ? "Bundled offline male Filipino voice played successfully."
+                            : "Bundled offline male English voice played successfully.";
                 }
                 startNextMaleLocked();
             }
