@@ -1,0 +1,2 @@
+# Install only the dependencies needed for Google LiteRT export.
+ultralytics[export-litert]==8.4.182

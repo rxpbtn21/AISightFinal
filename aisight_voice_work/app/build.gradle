@@ -1,0 +1,50 @@
+plugins {
+    id 'com.android.application'
+    id 'org.jetbrains.kotlin.android'
+}
+
+android {
+    namespace 'com.example.aisightmobile'
+    compileSdk 36
+
+    defaultConfig {
+        applicationId 'com.example.aisightmobile'
+        minSdk 26
+        targetSdk 34
+        versionCode 4
+        versionName '2.1'
+    }
+
+    androidResources {
+        noCompress += ['onnx']
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+}
+
+dependencies {
+    implementation project(':piper-engine')
+    implementation project(':piper-player')
+    implementation 'androidx.activity:activity:1.10.1'
+    implementation 'androidx.core:core:1.15.0'
+    implementation 'androidx.camera:camera-core:1.6.2'
+    implementation 'androidx.camera:camera-camera2:1.6.2'
+    implementation 'androidx.camera:camera-lifecycle:1.6.2'
+    implementation 'androidx.camera:camera-view:1.6.2'
+    implementation 'androidx.camera:camera-video:1.6.2'
+
+    implementation 'org.tensorflow:tensorflow-lite:2.17.0'
+    implementation 'com.alphacephei:vosk-android:0.3.75'
+    // (com.google.mlkit:object-detection was removed: its generic "Home good / Fashion good" fallback
+    //  was never useful to a blind user and cost several MB. If the AISight model can't load, the app now says so.)
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+
+    testImplementation 'junit:junit:4.13.2'
+}

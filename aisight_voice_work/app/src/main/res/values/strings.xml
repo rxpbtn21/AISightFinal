@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">AISight</string>
+    <string name="cd_settings">Settings</string>
+    <string name="cd_close">Close</string>
+    <string name="cd_read_text">Read text in front of the camera</string>
+    <string name="cd_record">Record a video</string>
+    <string name="cd_wearable">Wearable mode: black screen, keeps working</string>
+    <string name="cd_silence">Silence the alarm</string>
+</resources>
